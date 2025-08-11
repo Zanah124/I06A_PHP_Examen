@@ -1,4 +1,3 @@
-```php
 <?php
 session_start();
 require_once "reservations.php";
@@ -14,40 +13,27 @@ $livresModel = new Livres();
 $reservations = $reservationsModel->getAllReservations();
 $userName = $_SESSION['user']['nom'] ?? 'Administrateur';
 
-// Compter les réservations par statut
-$reservationStats = [
-    'en_attente' => 0,
-    'validee' => 0,
-    'annulee' => 0,
-    'total' => 0
-];
+// Utiliser la nouvelle méthode pour récupérer les statistiques
+$reservationStats = $reservationsModel->getReservationStats();
 
 // Organiser les réservations par statut
 $reservationsByStatus = [
     'en_attente' => [],
     'validee' => [],
+    'prise' => [],
+    'rendu' => [],
     'annulee' => []
 ];
 
 foreach ($reservations as $reservation) {
-    $status = $reservation['statut'];
-    $reservationStats['total']++;
-    
-    switch ($status) {
-        case 'en attente':
-            $reservationStats['en_attente']++;
-            $reservationsByStatus['en_attente'][] = $reservation;
-            break;
-        case 'validee':
-            $reservationStats['validee']++;
-            $reservationsByStatus['validee'][] = $reservation;
-            break;
-        case 'annulee':
-            $reservationStats['annulee']++;
-            $reservationsByStatus['annulee'][] = $reservation;
-            break;
+    $status = str_replace(' ', '_', $reservation['statut']);
+    if (isset($reservationsByStatus[$status])) {
+        $reservationsByStatus[$status][] = $reservation;
     }
 }
+
+// Récupérer les livres en retard
+$overdueBooks = $reservationsModel->getOverdueBooks();
 ?>
 <!DOCTYPE html>
 <html lang="fr">
@@ -180,7 +166,7 @@ foreach ($reservations as $reservation) {
 
         .stats-row {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
             gap: 20px;
             margin-bottom: 30px;
         }
@@ -207,8 +193,11 @@ foreach ($reservations as $reservation) {
 
         .stat-card.pending::before { background: #f39c12; }
         .stat-card.validated::before { background: #2ecc71; }
+        .stat-card.taken::before { background: #3498db; }
+        .stat-card.returned::before { background: #9b59b6; }
         .stat-card.cancelled::before { background: #e74c3c; }
-        .stat-card.total::before { background: #3498db; }
+        .stat-card.total::before { background: #34495e; }
+        .stat-card.overdue::before { background: #e67e22; }
 
         .stat-card:hover {
             transform: translateY(-10px);
@@ -222,8 +211,11 @@ foreach ($reservations as $reservation) {
 
         .stat-card.pending .stat-icon { color: #f39c12; }
         .stat-card.validated .stat-icon { color: #2ecc71; }
+        .stat-card.taken .stat-icon { color: #3498db; }
+        .stat-card.returned .stat-icon { color: #9b59b6; }
         .stat-card.cancelled .stat-icon { color: #e74c3c; }
-        .stat-card.total .stat-icon { color: #3498db; }
+        .stat-card.total .stat-icon { color: #34495e; }
+        .stat-card.overdue .stat-icon { color: #e67e22; }
 
         .stat-number {
             font-size: 2.5em;
@@ -304,7 +296,25 @@ foreach ($reservations as $reservation) {
 
         .status-pending { background: #fff3cd; color: #856404; }
         .status-validated { background: #d1edff; color: #0c5460; }
+        .status-taken { background: #cce5ff; color: #004085; }
+        .status-returned { background: #e2d5f5; color: #6f42c1; }
         .status-cancelled { background: #f8d7da; color: #721c24; }
+
+        .overdue-badge {
+            background: #ffeccc;
+            color: #cc7a00;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .days-left {
+            font-size: 0.9em;
+            color: #7f8c8d;
+            font-style: italic;
+        }
 
         .table {
             border-radius: 10px;
@@ -344,6 +354,36 @@ foreach ($reservations as $reservation) {
             background: #27ae60;
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(46, 204, 113, 0.4);
+        }
+
+        .btn-primary {
+            background: #3498db;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 15px;
+            transition: all 0.3s ease;
+            margin-right: 5px;
+        }
+
+        .btn-primary:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(52, 152, 219, 0.4);
+        }
+
+        .btn-warning {
+            background: #f39c12;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 15px;
+            transition: all 0.3s ease;
+            margin-right: 5px;
+        }
+
+        .btn-warning:hover {
+            background: #e67e22;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(243, 156, 18, 0.4);
         }
 
         .btn-danger {
@@ -397,6 +437,13 @@ foreach ($reservations as $reservation) {
             cursor: pointer;
         }
 
+        .alert-overdue {
+            background: #ffe6cc;
+            border: 1px solid #ff9500;
+            color: #cc7a00;
+            margin-bottom: 20px;
+        }
+
         @media (max-width: 768px) {
             .sidebar {
                 transform: translateX(-100%);
@@ -416,7 +463,7 @@ foreach ($reservations as $reservation) {
             }
 
             .stats-row {
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
                 gap: 15px;
             }
 
@@ -464,6 +511,13 @@ foreach ($reservations as $reservation) {
             <p class="admin-subtitle">Consultez et gérez les réservations des utilisateurs</p>
         </div>
 
+        <?php if (!empty($overdueBooks)): ?>
+        <div class="alert alert-overdue">
+            <h5><i class="fas fa-exclamation-triangle"></i> Livres en Retard</h5>
+            <p>Il y a <strong><?php echo count($overdueBooks); ?></strong> livre(s) en retard qui doivent être retournés.</p>
+        </div>
+        <?php endif; ?>
+
         <!-- Statistiques des réservations -->
         <div class="stats-row">
             <div class="stat-card pending">
@@ -480,12 +534,33 @@ foreach ($reservations as $reservation) {
                 <div class="stat-number"><?php echo $reservationStats['validee']; ?></div>
                 <div class="stat-label">Validées</div>
             </div>
+            <div class="stat-card taken">
+                <div class="stat-icon">
+                    <i class="fas fa-book-open"></i>
+                </div>
+                <div class="stat-number"><?php echo $reservationStats['prise']; ?></div>
+                <div class="stat-label">Prises</div>
+            </div>
+            <div class="stat-card returned">
+                <div class="stat-icon">
+                    <i class="fas fa-undo"></i>
+                </div>
+                <div class="stat-number"><?php echo $reservationStats['rendu']; ?></div>
+                <div class="stat-label">Rendues</div>
+            </div>
             <div class="stat-card cancelled">
                 <div class="stat-icon">
                     <i class="fas fa-times-circle"></i>
                 </div>
                 <div class="stat-number"><?php echo $reservationStats['annulee']; ?></div>
                 <div class="stat-label">Annulées</div>
+            </div>
+            <div class="stat-card overdue">
+                <div class="stat-icon">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </div>
+                <div class="stat-number"><?php echo count($overdueBooks); ?></div>
+                <div class="stat-label">En Retard</div>
             </div>
             <div class="stat-card total">
                 <div class="stat-icon">
@@ -563,6 +638,7 @@ foreach ($reservations as $reservation) {
                             <th>Utilisateur</th>
                             <th>Date</th>
                             <th>Statut</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -577,6 +653,130 @@ foreach ($reservations as $reservation) {
                                 <td><?php echo htmlspecialchars($userId ? "Utilisateur ID: $userId" : 'Inconnu'); ?></td>
                                 <td><?php echo htmlspecialchars($reservation['date_reservation'] ?? 'Non définie'); ?></td>
                                 <td><span class="status-badge status-validated"><?php echo htmlspecialchars($reservation['statut']); ?></span></td>
+                                <td>
+                                    <button class="btn btn-primary" onclick="markAsTaken(<?php echo $reservation['id']; ?>)">
+                                        <i class="fas fa-book-open"></i> Marquer comme Pris
+                                    </button>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Livres pris -->
+        <?php if (!empty($reservationsByStatus['prise'])): ?>
+        <div class="table-card">
+            <div class="table-header">
+                <div class="table-icon">
+                    <i class="fas fa-book-open"></i>
+                </div>
+                <div class="table-title">Livres Empruntés (<?php echo count($reservationsByStatus['prise']); ?>)</div>
+            </div>
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Titre du Livre</th>
+                            <th>Utilisateur</th>
+                            <th>Date de Prise</th>
+                            <th>Date Limite</th>
+                            <th>Temps Restant</th>
+                            <th>Statut</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($reservationsByStatus['prise'] as $reservation): ?>
+                            <?php
+                            $livre = $reservation['livre_id'] ? $livresModel->getLivreById($reservation['livre_id']) : null;
+                            $userId = $reservation['user_id'];
+                            $daysLeft = $reservationsModel->getDaysUntilDue($reservation['date_limite_retour']);
+                            $isOverdue = $daysLeft < 0;
+                            ?>
+                            <tr class="<?php echo $isOverdue ? 'table-danger' : ''; ?>">
+                                <td><?php echo htmlspecialchars($reservation['id']); ?></td>
+                                <td><?php echo htmlspecialchars($livre ? $livre['titre'] : 'Inconnu'); ?></td>
+                                <td><?php echo htmlspecialchars($userId ? "Utilisateur ID: $userId" : 'Inconnu'); ?></td>
+                                <td><?php echo htmlspecialchars($reservation['date_prise'] ? date('d/m/Y H:i', strtotime($reservation['date_prise'])) : 'Non définie'); ?></td>
+                                <td><?php echo htmlspecialchars($reservation['date_limite_retour'] ? date('d/m/Y', strtotime($reservation['date_limite_retour'])) : 'Non définie'); ?></td>
+                                <td>
+                                    <?php if ($isOverdue): ?>
+                                        <span class="overdue-badge">
+                                            <i class="fas fa-exclamation-triangle"></i> 
+                                            <?php echo abs($daysLeft); ?> jour(s) de retard
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="days-left"><?php echo $daysLeft; ?> jour(s) restant(s)</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <span class="status-badge status-taken">
+                                        <?php echo htmlspecialchars($reservation['statut']); ?>
+                                        <?php if ($isOverdue): ?>
+                                            <span class="overdue-badge">RETARD</span>
+                                        <?php endif; ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <button class="btn btn-warning" onclick="markAsReturned(<?php echo $reservation['id']; ?>)">
+                                        <i class="fas fa-undo"></i> Marquer comme Rendu
+                                    </button>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Livres rendus -->
+        <?php if (!empty($reservationsByStatus['rendu'])): ?>
+        <div class="table-card">
+            <div class="table-header">
+                <div class="table-icon">
+                    <i class="fas fa-undo"></i>
+                </div>
+                <div class="table-title">Livres Rendus (<?php echo count($reservationsByStatus['rendu']); ?>)</div>
+            </div>
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Titre du Livre</th>
+                            <th>Utilisateur</th>
+                            <th>Date de Prise</th>
+                            <th>Date de Retour</th>
+                            <th>Durée d'Emprunt</th>
+                            <th>Statut</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($reservationsByStatus['rendu'] as $reservation): ?>
+                            <?php
+                            $livre = $reservation['livre_id'] ? $livresModel->getLivreById($reservation['livre_id']) : null;
+                            $userId = $reservation['user_id'];
+                            $dureeEmprunt = '';
+                            if ($reservation['date_prise'] && $reservation['date_retour']) {
+                                $datePrise = new DateTime($reservation['date_prise']);
+                                $dateRetour = new DateTime($reservation['date_retour']);
+                                $diff = $datePrise->diff($dateRetour);
+                                $dureeEmprunt = $diff->days . ' jour(s)';
+                            }
+                            ?>
+                            <tr>
+                                <td><?php echo htmlspecialchars($reservation['id']); ?></td>
+                                <td><?php echo htmlspecialchars($livre ? $livre['titre'] : 'Inconnu'); ?></td>
+                                <td><?php echo htmlspecialchars($userId ? "Utilisateur ID: $userId" : 'Inconnu'); ?></td>
+                                <td><?php echo htmlspecialchars($reservation['date_prise'] ? date('d/m/Y H:i', strtotime($reservation['date_prise'])) : 'Non définie'); ?></td>
+                                <td><?php echo htmlspecialchars($reservation['date_retour'] ? date('d/m/Y H:i', strtotime($reservation['date_retour'])) : 'Non définie'); ?></td>
+                                <td><?php echo htmlspecialchars($dureeEmprunt); ?></td>
+                                <td><span class="status-badge status-returned"><?php echo htmlspecialchars($reservation['statut']); ?></span></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -663,80 +863,108 @@ foreach ($reservations as $reservation) {
 
         function validateReservation(reservationId) {
             if (confirm('Valider cette réservation ?')) {
-                // Afficher un indicateur de chargement
-                const loadingAlert = document.createElement('div');
-                loadingAlert.className = 'alert alert-info position-fixed top-0 start-50 translate-middle-x mt-3';
-                loadingAlert.style.zIndex = '9999';
-                loadingAlert.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Validation en cours...';
-                document.body.appendChild(loadingAlert);
-
-                fetch('update_reservation.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: 'reservation_id=' + encodeURIComponent(reservationId) + '&action=validate'
-                })
-                .then(response => {
-                    // Retirer l'indicateur de chargement
-                    document.body.removeChild(loadingAlert);
-                    if (!response.ok) {
-                        return response.text().then(text => {
-                            throw new Error('Erreur réseau: ' + response.status + ' - Réponse: ' + text);
-                        });
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    if (data.success) {
-                        alert('Réservation validée avec succès.');
-                        window.location.replace('manage_reservations.php'); // Recharger la page pour refléter les changements
-                    } else {
-                        alert('Erreur : ' + (data.message || 'Erreur inconnue'));
-                    }
-                })
-                .catch(error => {
-                    console.error('Erreur:', error);
-                    alert('Une erreur est survenue lors de la validation: ' + error.message);
-                });
+                updateReservationStatus(reservationId, 'validate');
             }
         }
 
         function cancelReservation(reservationId) {
             if (confirm('Annuler cette réservation ?')) {
-                // Afficher un indicateur de chargement
-                const loadingAlert = document.createElement('div');
-                loadingAlert.className = 'alert alert-info position-fixed top-0 start-50 translate-middle-x mt-3';
-                loadingAlert.style.zIndex = '9999';
-                loadingAlert.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Annulation en cours...';
-                document.body.appendChild(loadingAlert);
-
-                fetch('update_reservation.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: 'reservation_id=' + encodeURIComponent(reservationId) + '&action=cancel'
-                })
-                .then(response => {
-                    // Retirer l'indicateur de chargement
-                    document.body.removeChild(loadingAlert);
-                    if (!response.ok) {
-                        return response.text().then(text => {
-                            throw new Error('Erreur réseau: ' + response.status + ' - Réponse: ' + text);
-                        });
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    if (data.success) {
-                        alert('Réservation annulée avec succès.');
-                        location.reload();
-                    } else {
-                        alert('Erreur : ' + (data.message || 'Erreur inconnue'));
-                    }
-                })
-                .catch(error => {
-                    console.error('Erreur:', error);
-                    alert('Une erreur est survenue lors de l\'annulation: ' + error.message);
-                });
+                updateReservationStatus(reservationId, 'cancel');
             }
+        }
+
+        function markAsTaken(reservationId) {
+            if (confirm('Marquer ce livre comme pris ?')) {
+                updateReservationStatus(reservationId, 'take');
+            }
+        }
+
+        function markAsReturned(reservationId) {
+            if (confirm('Marquer ce livre comme rendu ?')) {
+                updateReservationStatus(reservationId, 'return');
+            }
+        }
+
+        function updateReservationStatus(reservationId, action) {
+            const loadingAlert = document.createElement('div');
+            loadingAlert.className = 'alert alert-info position-fixed top-0 start-50 translate-middle-x mt-3';
+            loadingAlert.style.zIndex = '9999';
+            
+            let actionText = '';
+            switch(action) {
+                case 'validate': actionText = 'Validation'; break;
+                case 'cancel': actionText = 'Annulation'; break;
+                case 'take': actionText = 'Marquage comme pris'; break;
+                case 'return': actionText = 'Marquage comme rendu'; break;
+            }
+            
+            loadingAlert.innerHTML = `<i class="fas fa-spinner fa-spin me-2"></i>${actionText} en cours...`;
+            document.body.appendChild(loadingAlert);
+
+            fetch('update_reservation.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'reservation_id=' + encodeURIComponent(reservationId) + '&action=' + encodeURIComponent(action)
+            })
+            .then(response => {
+                document.body.removeChild(loadingAlert);
+                if (!response.ok) {
+                    return response.text().then(text => {
+                        throw new Error('Erreur réseau: ' + response.status + ' - Réponse: ' + text);
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    showNotification(data.message || `${actionText} effectuée avec succès.`, 'success');
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1500);
+                } else {
+                    showNotification('Erreur : ' + (data.message || 'Erreur inconnue'), 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Erreur:', error);
+                showNotification(`Une erreur est survenue lors du ${actionText.toLowerCase()}: ` + error.message, 'error');
+            });
+        }
+
+        function showNotification(message, type) {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.innerHTML = `
+                <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-triangle'}"></i>
+                <span>${message}</span>
+            `;
+            
+            Object.assign(notification.style, {
+                position: 'fixed',
+                top: '20px',
+                right: '20px',
+                background: type === 'success' ? 'linear-gradient(135deg, #27ae60, #2ecc71)' : 'linear-gradient(135deg, #e74c3c, #c0392b)',
+                color: 'white',
+                padding: '15px 20px',
+                borderRadius: '10px',
+                boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
+                zIndex: '9999',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                animation: 'slideInRight 0.3s ease-out'
+            });
+            
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.style.animation = 'slideOutRight 0.3s ease-in';
+                setTimeout(() => {
+                    if (document.body.contains(notification)) {
+                        document.body.removeChild(notification);
+                    }
+                }, 300);
+            }, 4000);
         }
 
         document.addEventListener('click', function(event) {
@@ -763,7 +991,33 @@ foreach ($reservations as $reservation) {
                 }, 100 * index);
             });
         });
+
+        // Ajouter les animations CSS pour les notifications
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideInRight {
+                from {
+                    opacity: 0;
+                    transform: translateX(100%);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateX(0);
+                }
+            }
+            
+            @keyframes slideOutRight {
+                from {
+                    opacity: 1;
+                    transform: translateX(0);
+                }
+                to {
+                    opacity: 0;
+                    transform: translateX(100%);
+                }
+            }
+        `;
+        document.head.appendChild(style);
     </script>
 </body>
 </html>
-```

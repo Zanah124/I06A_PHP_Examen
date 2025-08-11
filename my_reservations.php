@@ -1,48 +1,65 @@
 <?php
-ob_start(); 
 session_start();
-require_once "livres.php";
 require_once "reservations.php";
+require_once "livres.php";
 
-if (!isset($_SESSION['user']) || !$_SESSION['user']['id']) {
+if (!isset($_SESSION['user'])) {
     header("Location: login.php");
     exit;
 }
 
-$userId = $_SESSION['user']['id'];
 $reservationsModel = new Reservations();
 $livresModel = new Livres();
+$userId = $_SESSION['user']['id'];
+$userName = $_SESSION['user']['nom'] ?? 'Utilisateur';
 
-$newNotificationsCount = $reservationsModel->countNewNotifications($userId);
+// Récupérer toutes les réservations de l'utilisateur
+$userReservations = $reservationsModel->getReservationsByUserId($userId);
 
-$reservations = $reservationsModel->getReservationsByUserId($userId);
+// Organiser les réservations par statut
+$reservationsByStatus = [
+    'en_attente' => [],
+    'validee' => [],
+    'prise' => [],
+    'rendu' => [],
+    'annulee' => []
+];
 
-$bookDetails = [];
-foreach ($reservations as $reservation) {
-    if ($reservation['livre_id']) {
-        $book = $livresModel->getLivreById($reservation['livre_id']);
-        if ($book) {
-            $bookDetails[] = [
-                'reservation_id' => $reservation['id'],
-                'titre' => $book['titre'],
-                'auteur' => $book['auteur'],
-                'photo' => $book['photo'],
-                'statut' => $reservation['statut'],
-                'user_id' => $reservation['user_id'],
-                'date_reservation' => $reservation['date_reservation']
-            ];
-        }
+foreach ($userReservations as $reservation) {
+    $status = str_replace(' ', '_', $reservation['statut']);
+    if (isset($reservationsByStatus[$status])) {
+        $reservationsByStatus[$status][] = $reservation;
     }
 }
 
-$userName = $_SESSION['user']['nom'] ?? 'Utilisateur';
+// Calculer les statistiques
+$stats = [
+    'en_attente' => count($reservationsByStatus['en_attente']),
+    'validee' => count($reservationsByStatus['validee']),
+    'prise' => count($reservationsByStatus['prise']),
+    'rendu' => count($reservationsByStatus['rendu']),
+    'annulee' => count($reservationsByStatus['annulee']),
+    'total' => count($userReservations)
+];
+
+// Vérifier les livres en retard
+$overdueBooks = [];
+foreach ($reservationsByStatus['prise'] as $reservation) {
+    if ($reservation['date_limite_retour']) {
+        $daysLeft = $reservationsModel->getDaysUntilDue($reservation['date_limite_retour']);
+        if ($daysLeft < 0) {
+            $reservation['days_overdue'] = abs($daysLeft);
+            $overdueBooks[] = $reservation;
+        }
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mes Réservations - Bibliothèque en Ligne</title>
+    <title>Mes Réservations - Bibliothèque</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -58,449 +75,608 @@ $userName = $_SESSION['user']['nom'] ?? 'Utilisateur';
             min-height: 100vh;
         }
 
-        .sidebar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 280px;
-            height: 100vh;
-            background: linear-gradient(180deg, #2c3e50 0%, #34495e 100%);
+        .header {
+            background: white;
+            box-shadow: 0 2px 20px rgba(0,0,0,0.1);
             padding: 20px 0;
-            z-index: 1000;
-            box-shadow: 4px 0 15px rgba(0,0,0,0.1);
-            transition: transform 0.3s ease;
-        }
-
-        .sidebar-header {
-            padding: 0 20px 30px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
             margin-bottom: 30px;
         }
 
-        .sidebar-logo {
-            color: #ecf0f1;
-            font-size: 24px;
-            font-weight: bold;
-            text-decoration: none;
+        .header-content {
             display: flex;
+            justify-content: space-between;
             align-items: center;
-            gap: 10px;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 30px;
         }
 
-        .sidebar-nav {
-            list-style: none;
-            padding: 0;
-        }
-
-        .sidebar-nav li {
-            margin-bottom: 5px;
-        }
-
-        .sidebar-nav a {
-            display: flex;
-            align-items: center;
-            padding: 15px 20px;
-            color: #bdc3c7;
-            text-decoration: none;
-            transition: all 0.3s ease;
-            border-left: 3px solid transparent;
-        }
-
-        .sidebar-nav a:hover,
-        .sidebar-nav a.active {
-            background-color: rgba(52, 152, 219, 0.1);
-            color: #3498db;
-            border-left-color: #3498db;
-        }
-
-        .sidebar-nav i {
-            width: 20px;
-            margin-right: 15px;
-            text-align: center;
-        }
-
-        .main-content {
-            margin-left: 280px;
-            padding: 30px;
-            min-height: 100vh;
-        }
-
-        .dashboard-header {
-            background: white;
-            border-radius: 15px;
-            padding: 30px;
-            margin-bottom: 30px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .dashboard-header::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, #667eea, #764ba2);
-        }
-
-        .dashboard-title {
+        .header-title {
+            font-size: 2.2em;
+            font-weight: 700;
             color: #2c3e50;
-            font-size: 2.5em;
-            font-weight: 300;
-            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
         }
 
-        .dashboard-subtitle {
+        .user-info {
             color: #7f8c8d;
             font-size: 1.1em;
         }
 
-        .reservation-card {
-            background: white;
-            border-radius: 15px;
-            padding: 25px;
-            margin-bottom: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        .header-actions {
             display: flex;
+            gap: 15px;
             align-items: center;
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
         }
 
-        .reservation-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 20px 40px rgba(0,0,0,0.15);
-        }
-
-        .reservation-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(102, 126, 234, 0.1), transparent);
-            transition: left 0.6s;
-        }
-
-        .reservation-card:hover::before {
-            left: 100%;
-        }
-
-        .reservation-image img {
-            max-width: 100px;
-            height: auto;
-            border-radius: 10px;
-            margin-right: 20px;
-            border: 2px solid rgba(102, 126, 234, 0.3);
-        }
-
-        .reservation-details {
-            flex-grow: 1;
-        }
-
-        .reservation-title {
-            font-size: 1.4em;
-            font-weight: 600;
-            color: #2c3e50;
-            margin-bottom: 10px;
-        }
-
-        .reservation-author {
-            color: #7f8c8d;
-            margin-bottom: 10px;
-        }
-
-        .reservation-status {
-            font-weight: bold;
-            font-size: 1.1em;
-            margin-bottom: 10px;
-        }
-
-        .reservation-date {
-            color: #95a5a6;
-            font-size: 0.9em;
-            margin-bottom: 10px;
-        }
-
-        .status-badge {
-            display: inline-block;
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 0.85em;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .status-validee { 
-            background: #d4edda; 
-            color: #155724; 
-        }
-        
-        .status-en-attente { 
-            background: #fff3cd; 
-            color: #856404; 
-        }
-        
-        .status-annulee { 
-            background: #f8d7da; 
-            color: #721c24; 
-        }
-
-        .reservation-actions {
-            margin-left: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-
-        .btn-cancel {
-            background: #e74c3c;
+        .btn-back {
+            background: linear-gradient(135deg, #667eea, #764ba2);
             color: white;
-            border: none;
-            border-radius: 8px;
-            padding: 10px 20px;
-            font-size: 0.9em;
-            font-weight: 600;
-            cursor: pointer;
+            text-decoration: none;
+            padding: 12px 25px;
+            border-radius: 25px;
+            font-weight: 500;
             transition: all 0.3s ease;
             display: flex;
             align-items: center;
             gap: 8px;
         }
 
-        .btn-cancel:hover {
-            background: #c0392b;
+        .btn-back:hover {
+            color: white;
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(231, 76, 60, 0.4);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
         }
 
-        .btn-cancel:disabled {
-            background: #bdc3c7;
-            cursor: not-allowed;
-            transform: none;
-            box-shadow: none;
+        .main-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 30px;
+        }
+
+        .alert-overdue {
+            background: #ffe6cc;
+            border: 1px solid #ff9500;
+            color: #cc7a00;
+            margin-bottom: 20px;
+            border-radius: 15px;
+            padding: 20px;
+        }
+
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            text-align: center;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+        }
+
+        .stat-card.pending::before { background: #f39c12; }
+        .stat-card.validated::before { background: #2ecc71; }
+        .stat-card.taken::before { background: #3498db; }
+        .stat-card.returned::before { background: #9b59b6; }
+        .stat-card.cancelled::before { background: #e74c3c; }
+        .stat-card.total::before { background: #34495e; }
+
+        .stat-card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+        }
+
+        .stat-icon {
+            font-size: 2.5em;
+            margin-bottom: 15px;
+        }
+
+        .stat-card.pending .stat-icon { color: #f39c12; }
+        .stat-card.validated .stat-icon { color: #2ecc71; }
+        .stat-card.taken .stat-icon { color: #3498db; }
+        .stat-card.returned .stat-icon { color: #9b59b6; }
+        .stat-card.cancelled .stat-icon { color: #e74c3c; }
+        .stat-card.total .stat-icon { color: #34495e; }
+
+        .stat-number {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            color: #7f8c8d;
+            font-size: 1.1em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .section-card {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            transition: all 0.4s ease;
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #ecf0f1;
+        }
+
+        .section-icon {
+            font-size: 2em;
+            margin-right: 15px;
+            color: #667eea;
+        }
+
+        .section-title {
+            font-size: 1.8em;
+            color: #2c3e50;
+            font-weight: 600;
+        }
+
+        .reservation-item {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 15px;
+            transition: all 0.3s ease;
+            border-left: 5px solid transparent;
+        }
+
+        .reservation-item:hover {
+            transform: translateX(5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .reservation-item.pending { border-left-color: #f39c12; }
+        .reservation-item.validated { border-left-color: #2ecc71; }
+        .reservation-item.taken { border-left-color: #3498db; }
+        .reservation-item.returned { border-left-color: #9b59b6; }
+        .reservation-item.cancelled { border-left-color: #e74c3c; }
+
+        .book-title {
+            font-size: 1.3em;
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .book-author {
+            color: #7f8c8d;
+            margin-bottom: 15px;
+        }
+
+        .reservation-meta {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .meta-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #6c757d;
+            font-size: 0.9em;
+        }
+
+        .status-badge {
+            padding: 8px 16px;
+            border-radius: 25px;
+            font-size: 0.9em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-pending { background: #fff3cd; color: #856404; }
+        .status-validated { background: #d1edff; color: #0c5460; }
+        .status-taken { background: #cce5ff; color: #004085; }
+        .status-returned { background: #e2d5f5; color: #6f42c1; }
+        .status-cancelled { background: #f8d7da; color: #721c24; }
+
+        .overdue-warning {
+            background: #ffeccc;
+            color: #cc7a00;
+            padding: 10px 15px;
+            border-radius: 10px;
+            margin-top: 10px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .days-remaining {
+            background: #e8f5e8;
+            color: #2d5a2d;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
         }
 
         .no-reservations {
             text-align: center;
             color: #7f8c8d;
             font-size: 1.2em;
-            padding: 40px 20px;
-            background: white;
+            padding: 60px 40px;
+            background: #f8f9fa;
             border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            border: 2px dashed #dee2e6;
         }
 
         .no-reservations i {
-            font-size: 3em;
-            color: #bdc3c7;
+            font-size: 4em;
             margin-bottom: 20px;
+            color: #bdc3c7;
         }
 
-        .btn-primary {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            border: none;
-            border-radius: 10px;
-            padding: 12px 30px;
+        .btn-browse {
+            background: linear-gradient(135deg, #27ae60, #2ecc71);
+            color: white;
+            text-decoration: none;
+            padding: 15px 30px;
+            border-radius: 25px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 20px;
             transition: all 0.3s ease;
         }
 
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        }
-
-        .sidebar-toggle {
-            display: none;
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            z-index: 1001;
-            background: #2c3e50;
+        .btn-browse:hover {
             color: white;
-            border: none;
-            padding: 10px;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-
-        .loading-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.7);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 9999;
-            display: none;
-        }
-
-        .loading-content {
-            background: white;
-            padding: 30px;
-            border-radius: 15px;
-            text-align: center;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-        }
-
-        .loading-spinner {
-            width: 40px;
-            height: 40px;
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #667eea;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 15px;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(39, 174, 96, 0.3);
         }
 
         @media (max-width: 768px) {
-            .sidebar {
-                transform: translateX(-100%);
-            }
-
-            .sidebar.show {
-                transform: translateX(0);
-            }
-
-            .main-content {
-                margin-left: 0;
-                padding: 20px;
-            }
-
-            .sidebar-toggle {
-                display: block;
-            }
-
-            .reservation-card {
+            .header-content {
                 flex-direction: column;
-                align-items: flex-start;
+                gap: 15px;
                 text-align: center;
             }
 
-            .reservation-image img {
-                margin-bottom: 15px;
-                margin-right: 0;
+            .main-content {
+                padding: 0 20px;
             }
 
-            .reservation-actions {
-                margin-left: 0;
-                margin-top: 15px;
-                width: 100%;
+            .stats-row {
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 15px;
             }
 
-            .btn-cancel {
-                justify-content: center;
+            .reservation-meta {
+                grid-template-columns: 1fr;
             }
         }
     </style>
 </head>
 <body>
-    <button class="sidebar-toggle" onclick="toggleSidebar()">
-        <i class="fas fa-bars"></i>
-    </button>
-
-    <div class="loading-overlay" id="loadingOverlay">
-        <div class="loading-content">
-            <div class="loading-spinner"></div>
-            <p>Annulation en cours...</p>
-        </div>
-    </div>
-
-    <div class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <a href="index.php" class="sidebar-logo">
-                <i class="fas fa-book"></i>
-                Bibliothèque Acacia
-            </a>
-        </div>
-        <ul class="sidebar-nav">
-            <li><a href="index.php"><i class="fas fa-home"></i>Accueil</a></li>
-            <li><a href="dashboard.php"><i class="fas fa-tachometer-alt"></i>Dashboard</a></li>
-            <li><a href="list_livres.php"><i class="fas fa-book-open"></i>Livres</a></li>
-            <li><a href="my_reservations.php" class="active"><i class="fas fa-calendar-check"></i>Mes Réservations</a></li>
-             <li>
-                <a href="notifications.php">
-                    <i class="fas fa-bell"></i> Notifications
-                    <?php if ($newNotificationsCount > 0): ?>
-                        <span class="notification-badge"><?php echo htmlspecialchars($newNotificationsCount); ?></span>
-                    <?php endif; ?>
+    <header class="header">
+        <div class="header-content">
+            <div>
+                <h1 class="header-title">
+                    <i class="fas fa-bookmark"></i>
+                    Mes Réservations
+                </h1>
+                <p class="user-info">Bienvenue, <?php echo htmlspecialchars($userName); ?></p>
+            </div>
+            <div class="header-actions">
+                <a href="list_livres.php" class="btn-back">
+                    <i class="fas fa-book"></i> Parcourir les livres
                 </a>
-            </li>
-            <li><a href="edit_profile.php"><i class="fas fa-user-edit"></i>Modifier Profil</a></li>
-            <li><a href="#" onclick="logout()"><i class="fas fa-sign-out-alt"></i>Déconnexion</a></li>
-        </ul>
-    </div>
-
-    <div class="main-content">
-        <div class="dashboard-header">
-            <h1 class="dashboard-title">Mes Réservations</h1>
-            <p class="dashboard-subtitle">Consultez l'état de vos réservations de livres</p>
-        </div>
-
-        <?php if (empty($bookDetails)): ?>
-            <div class="no-reservations">
-                <i class="fas fa-calendar-times"></i>
-                <h3>Aucune réservation trouvée</h3>
-                <p>Vous n'avez pas encore effectué de réservation.</p>
-                <a href="list_livres.php" class="btn btn-primary mt-3">
-                    <i class="fas fa-book"></i> Découvrir nos livres
+                <a href="index.php" class="btn-back">
+                    <i class="fas fa-home"></i> Accueil
                 </a>
             </div>
+        </div>
+    </header>
+
+    <div class="main-content">
+        <?php if (!empty($overdueBooks)): ?>
+        <div class="alert alert-overdue">
+            <h5><i class="fas fa-exclamation-triangle"></i> Livres en Retard</h5>
+            <p>Vous avez <strong><?php echo count($overdueBooks); ?></strong> livre(s) en retard. Veuillez les retourner rapidement à la bibliothèque.</p>
+        </div>
+        <?php endif; ?>
+
+        <!-- Statistiques des réservations -->
+        <div class="stats-row">
+            <div class="stat-card pending">
+                <div class="stat-icon">
+                    <i class="fas fa-clock"></i>
+                </div>
+                <div class="stat-number"><?php echo $stats['en_attente']; ?></div>
+                <div class="stat-label">En Attente</div>
+            </div>
+            <div class="stat-card validated">
+                <div class="stat-icon">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+                <div class="stat-number"><?php echo $stats['validee']; ?></div>
+                <div class="stat-label">Validées</div>
+            </div>
+            <div class="stat-card taken">
+                <div class="stat-icon">
+                    <i class="fas fa-book-open"></i>
+                </div>
+                <div class="stat-number"><?php echo $stats['prise']; ?></div>
+                <div class="stat-label">Empruntées</div>
+            </div>
+            <div class="stat-card returned">
+                <div class="stat-icon">
+                    <i class="fas fa-undo"></i>
+                </div>
+                <div class="stat-number"><?php echo $stats['rendu']; ?></div>
+                <div class="stat-label">Rendues</div>
+            </div>
+            <div class="stat-card cancelled">
+                <div class="stat-icon">
+                    <i class="fas fa-times-circle"></i>
+                </div>
+                <div class="stat-number"><?php echo $stats['annulee']; ?></div>
+                <div class="stat-label">Annulées</div>
+            </div>
+            <div class="stat-card total">
+                <div class="stat-icon">
+                    <i class="fas fa-list"></i>
+                </div>
+                <div class="stat-number"><?php echo $stats['total']; ?></div>
+                <div class="stat-label">Total</div>
+            </div>
+        </div>
+
+        <?php if (empty($userReservations)): ?>
+        <div class="section-card">
+            <div class="no-reservations">
+                <i class="fas fa-bookmark"></i>
+                <h3>Aucune réservation</h3>
+                <p>Vous n'avez encore fait aucune réservation.</p>
+                <a href="list_livres.php" class="btn-browse">
+                    <i class="fas fa-search"></i> Parcourir les livres
+                </a>
+            </div>
+        </div>
         <?php else: ?>
-            <?php foreach ($bookDetails as $detail): ?>
-                <div class="reservation-card">
-                    <div class="reservation-image">
-                        <?php if ($detail['photo'] && file_exists($_SERVER['DOCUMENT_ROOT'] . '/assets/' . $detail['photo'])): ?>
-                             <img src="/assets/<?php echo htmlspecialchars($detail['photo']); ?>" alt="<?php echo htmlspecialchars($detail['titre']); ?>">
-                        <?php else: ?>
-                             <img src="/assets/images/default-book.jpg" alt="Photo du livre par défaut" onerror="this.parentNode.innerHTML='<i class=\'fas fa-book\'></i>'">
-                            <?php endif; ?>
+
+        <!-- Réservations en attente -->
+        <?php if (!empty($reservationsByStatus['en_attente'])): ?>
+        <div class="section-card">
+            <div class="section-header">
+                <div class="section-icon">
+                    <i class="fas fa-clock"></i>
+                </div>
+                <div class="section-title">Réservations en Attente (<?php echo count($reservationsByStatus['en_attente']); ?>)</div>
+            </div>
+            <?php foreach ($reservationsByStatus['en_attente'] as $reservation): ?>
+            <div class="reservation-item pending">
+                <div class="book-title"><?php echo htmlspecialchars($reservation['titre'] ?? 'Titre inconnu'); ?></div>
+                <div class="book-author">
+                    <i class="fas fa-user"></i> <?php echo htmlspecialchars($reservation['auteur'] ?? 'Auteur inconnu'); ?>
+                </div>
+                <div class="reservation-meta">
+                    <div class="meta-item">
+                        <i class="fas fa-calendar"></i>
+                        Demandé le: <?php echo date('d/m/Y à H:i', strtotime($reservation['date_reservation'])); ?>
                     </div>
-                    <div class="reservation-details">
-                        <h5 class="reservation-title"><?php echo htmlspecialchars($detail['titre']); ?></h5>
-                        <p class="reservation-author">
-                            <i class="fas fa-user"></i> Auteur : <?php echo htmlspecialchars($detail['auteur']); ?>
-                        </p>
-                        <?php if ($detail['date_reservation']): ?>
-                        <p class="reservation-date">
-                            <i class="fas fa-calendar"></i> Réservé le : <?php echo date('d/m/Y', strtotime($detail['date_reservation'])); ?>
-                        </p>
-                        <?php endif; ?>
-                        <div class="reservation-status">
-                            <i class="fas fa-info-circle"></i> Statut : 
-                            <span class="status-badge status-<?php echo strtolower(str_replace(' ', '-', $detail['statut'])); ?>">
-                                <?php echo htmlspecialchars($detail['statut']); ?>
-                            </span>
-                        </div>
+                </div>
+                <div class="status-badge status-pending">
+                    <i class="fas fa-clock"></i>
+                    En attente de validation
+                </div>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+
+        <!-- Réservations validées -->
+        <?php if (!empty($reservationsByStatus['validee'])): ?>
+        <div class="section-card">
+            <div class="section-header">
+                <div class="section-icon">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+                <div class="section-title">Réservations Validées (<?php echo count($reservationsByStatus['validee']); ?>)</div>
+            </div>
+            <?php foreach ($reservationsByStatus['validee'] as $reservation): ?>
+            <div class="reservation-item validated">
+                <div class="book-title"><?php echo htmlspecialchars($reservation['titre'] ?? 'Titre inconnu'); ?></div>
+                <div class="book-author">
+                    <i class="fas fa-user"></i> <?php echo htmlspecialchars($reservation['auteur'] ?? 'Auteur inconnu'); ?>
+                </div>
+                <div class="reservation-meta">
+                    <div class="meta-item">
+                        <i class="fas fa-calendar"></i>
+                        Réservé le: <?php echo date('d/m/Y à H:i', strtotime($reservation['date_reservation'])); ?>
                     </div>
-                    
-                    <?php if ($detail['statut'] === 'en attente'): ?>
-                    <div class="reservation-actions">
-                        <button class="btn-cancel" onclick="cancelReservation(<?php echo $detail['reservation_id']; ?>)">
-                            <i class="fas fa-times"></i>
-                            Annuler la réservation
-                        </button>
+                </div>
+                <div class="status-badge status-validated">
+                    <i class="fas fa-check-circle"></i>
+                    Prêt à être retiré
+                </div>
+                <div style="margin-top: 15px; background: #d1f2eb; color: #0d5b4d; padding: 10px; border-radius: 8px;">
+                    <i class="fas fa-info-circle"></i>
+                    <strong>Votre livre est prêt !</strong> Vous pouvez venir le récupérer à la bibliothèque.
+                </div>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+
+        <!-- Livres empruntés -->
+        <?php if (!empty($reservationsByStatus['prise'])): ?>
+        <div class="section-card">
+            <div class="section-header">
+                <div class="section-icon">
+                    <i class="fas fa-book-open"></i>
+                </div>
+                <div class="section-title">Livres Empruntés (<?php echo count($reservationsByStatus['prise']); ?>)</div>
+            </div>
+            <?php foreach ($reservationsByStatus['prise'] as $reservation): ?>
+            <?php 
+            $daysLeft = $reservationsModel->getDaysUntilDue($reservation['date_limite_retour']);
+            $isOverdue = $daysLeft < 0;
+            ?>
+            <div class="reservation-item taken">
+                <div class="book-title"><?php echo htmlspecialchars($reservation['titre'] ?? 'Titre inconnu'); ?></div>
+                <div class="book-author">
+                    <i class="fas fa-user"></i> <?php echo htmlspecialchars($reservation['auteur'] ?? 'Auteur inconnu'); ?>
+                </div>
+                <div class="reservation-meta">
+                    <div class="meta-item">
+                        <i class="fas fa-calendar-check"></i>
+                        Emprunté le: <?php echo date('d/m/Y à H:i', strtotime($reservation['date_prise'])); ?>
+                    </div>
+                    <div class="meta-item">
+                        <i class="fas fa-calendar-times"></i>
+                        À retourner le: <?php echo date('d/m/Y', strtotime($reservation['date_limite_retour'])); ?>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-between align-items-center">
+                    <div class="status-badge status-taken">
+                        <i class="fas fa-book-open"></i>
+                        Emprunté
+                    </div>
+                    <?php if ($isOverdue): ?>
+                        <span class="overdue-warning">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            En retard de <?php echo abs($daysLeft); ?> jour(s)
+                        </span>
+                    <?php else: ?>
+                        <span class="days-remaining">
+                            <?php echo $daysLeft; ?> jour(s) restant(s)
+                        </span>
+                    <?php endif; ?>
+                </div>
+                <?php if ($isOverdue): ?>
+                <div class="overdue-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    Ce livre est en retard ! Veuillez le retourner rapidement à la bibliothèque.
+                </div>
+                <?php endif; ?>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+
+        <!-- Livres rendus -->
+        <?php if (!empty($reservationsByStatus['rendu'])): ?>
+        <div class="section-card">
+            <div class="section-header">
+                <div class="section-icon">
+                    <i class="fas fa-undo"></i>
+                </div>
+                <div class="section-title">Livres Rendus (<?php echo count($reservationsByStatus['rendu']); ?>)</div>
+            </div>
+            <?php foreach ($reservationsByStatus['rendu'] as $reservation): ?>
+            <?php 
+            $dureeEmprunt = '';
+            if ($reservation['date_prise'] && $reservation['date_retour']) {
+                $datePrise = new DateTime($reservation['date_prise']);
+                $dateRetour = new DateTime($reservation['date_retour']);
+                $diff = $datePrise->diff($dateRetour);
+                $dureeEmprunt = $diff->days . ' jour(s)';
+            }
+            ?>
+            <div class="reservation-item returned">
+                <div class="book-title"><?php echo htmlspecialchars($reservation['titre'] ?? 'Titre inconnu'); ?></div>
+                <div class="book-author">
+                    <i class="fas fa-user"></i> <?php echo htmlspecialchars($reservation['auteur'] ?? 'Auteur inconnu'); ?>
+                </div>
+                <div class="reservation-meta">
+                    <div class="meta-item">
+                        <i class="fas fa-calendar-check"></i>
+                        Emprunté le: <?php echo $reservation['date_prise'] ? date('d/m/Y', strtotime($reservation['date_prise'])) : 'Non défini'; ?>
+                    </div>
+                    <div class="meta-item">
+                        <i class="fas fa-undo"></i>
+                        Rendu le: <?php echo $reservation['date_retour'] ? date('d/m/Y', strtotime($reservation['date_retour'])) : 'Non défini'; ?>
+                    </div>
+                    <?php if ($dureeEmprunt): ?>
+                    <div class="meta-item">
+                        <i class="fas fa-clock"></i>
+                        Durée: <?php echo $dureeEmprunt; ?>
                     </div>
                     <?php endif; ?>
                 </div>
+                <div class="status-badge status-returned">
+                    <i class="fas fa-undo"></i>
+                    Rendu
+                </div>
+            </div>
             <?php endforeach; ?>
+        </div>
         <?php endif; ?>
 
-        <div class="d-flex justify-content-center mt-4">
-            <a href="index.php" class="btn btn-primary">
+        <!-- Réservations annulées -->
+        <?php if (!empty($reservationsByStatus['annulee'])): ?>
+        <div class="section-card">
+            <div class="section-header">
+                <div class="section-icon">
+                    <i class="fas fa-times-circle"></i>
+                </div>
+                <div class="section-title">Réservations Annulées (<?php echo count($reservationsByStatus['annulee']); ?>)</div>
+            </div>
+            <?php foreach ($reservationsByStatus['annulee'] as $reservation): ?>
+            <div class="reservation-item cancelled">
+                <div class="book-title"><?php echo htmlspecialchars($reservation['titre'] ?? 'Titre inconnu'); ?></div>
+                <div class="book-author">
+                    <i class="fas fa-user"></i> <?php echo htmlspecialchars($reservation['auteur'] ?? 'Auteur inconnu'); ?>
+                </div>
+                <div class="reservation-meta">
+                    <div class="meta-item">
+                        <i class="fas fa-calendar"></i>
+                        Demandé le: <?php echo date('d/m/Y à H:i', strtotime($reservation['date_reservation'])); ?>
+                    </div>
+                </div>
+                <div class="status-badge status-cancelled">
+                    <i class="fas fa-times-circle"></i>
+                    Annulée
+                </div>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+
+        <?php endif; ?>
+
+        <div class="d-flex justify-content-center mt-4 gap-3">
+            <a href="list_livres.php" class="btn-browse">
+                <i class="fas fa-search"></i> Parcourir les livres
+            </a>
+            <a href="index.php" class="btn-back">
                 <i class="fas fa-home"></i> Retour à l'accueil
             </a>
         </div>
@@ -508,92 +684,9 @@ $userName = $_SESSION['user']['nom'] ?? 'Utilisateur';
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        function toggleSidebar() {
-            document.getElementById('sidebar').classList.toggle('show');
-        }
-
-        function logout() {
-            if (confirm('Êtes-vous sûr de vouloir vous déconnecter ?')) {
-                fetch('logout.php')
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            window.location.href = 'index.php';
-                        }
-                    })
-                    .catch(error => console.error('Erreur:', error));
-            }
-        }
-
-        function cancelReservation(reservationId) {
-            if (confirm('Êtes-vous sûr de vouloir annuler cette réservation ?')) {
-                // Afficher l'overlay de chargement
-                document.getElementById('loadingOverlay').style.display = 'flex';
-                
-                // Désactiver le bouton pendant le traitement
-                const button = event.target.closest('.btn-cancel');
-                button.disabled = true;
-                button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Annulation...';
-
-                fetch('cancel_my_reservation.php', {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/x-www-form-urlencoded' 
-                    },
-                    body: 'reservation_id=' + encodeURIComponent(reservationId)
-                })
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Erreur réseau: ' + response.status);
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    // Masquer l'overlay de chargement
-                    document.getElementById('loadingOverlay').style.display = 'none';
-                    
-                    if (data.success) {
-                        // Afficher un message de succès avec animation
-                        const successAlert = document.createElement('div');
-                        successAlert.className = 'alert alert-success position-fixed top-0 start-50 translate-middle-x mt-3';
-                        successAlert.style.zIndex = '9999';
-                        successAlert.innerHTML = '<i class="fas fa-check-circle me-2"></i>Réservation annulée avec succès !';
-                        document.body.appendChild(successAlert);
-                        
-                        // Recharger la page après 2 secondes
-                        setTimeout(() => {
-                            location.reload();
-                        }, 2000);
-                    } else {
-                        alert('Erreur : ' + (data.message || 'Erreur inconnue lors de l\'annulation'));
-                        button.disabled = false;
-                        button.innerHTML = '<i class="fas fa-times"></i> Annuler la réservation';
-                    }
-                })
-                .catch(error => {
-                    // Masquer l'overlay de chargement
-                    document.getElementById('loadingOverlay').style.display = 'none';
-                    console.error('Erreur:', error);
-                    alert('Une erreur est survenue lors de l\'annulation: ' + error.message);
-                    button.disabled = false;
-                    button.innerHTML = '<i class="fas fa-times"></i> Annuler la réservation';
-                });
-            }
-        }
-
-        document.addEventListener('click', function(event) {
-            const sidebar = document.getElementById('sidebar');
-            const toggle = document.querySelector('.sidebar-toggle');
-            
-            if (window.innerWidth <= 768) {
-                if (!sidebar.contains(event.target) && !toggle.contains(event.target)) {
-                    sidebar.classList.remove('show');
-                }
-            }
-        });
-
+        // Animation d'apparition des éléments
         document.addEventListener('DOMContentLoaded', function() {
-            const cards = document.querySelectorAll('.reservation-card');
+            const cards = document.querySelectorAll('.section-card, .stat-card');
             cards.forEach((card, index) => {
                 card.style.opacity = '0';
                 card.style.transform = 'translateY(30px)';
@@ -601,9 +694,36 @@ $userName = $_SESSION['user']['nom'] ?? 'Utilisateur';
                     card.style.transition = 'all 0.6s ease';
                     card.style.opacity = '1';
                     card.style.transform = 'translateY(0)';
-                }, index * 100);
+                }, 100 * index);
             });
+
+            // Animation pour les éléments de réservation
+            setTimeout(() => {
+                const items = document.querySelectorAll('.reservation-item');
+                items.forEach((item, index) => {
+                    item.style.opacity = '0';
+                    item.style.transform = 'translateX(-20px)';
+                    setTimeout(() => {
+                        item.style.transition = 'all 0.4s ease';
+                        item.style.opacity = '1';
+                        item.style.transform = 'translateX(0)';
+                    }, 50 * index);
+                });
+            }, 500);
         });
+
+        // Mise à jour automatique de l'heure restante (optionnel)
+        function updateCountdowns() {
+            const daysElements = document.querySelectorAll('.days-remaining');
+            // Ici vous pourriez ajouter une logique pour mettre à jour en temps réel
+            // les jours restants, mais ce n'est généralement pas nécessaire pour une bibliothèque
+        }
+
+        // Rafraîchir les données toutes les 5 minutes (optionnel)
+        setInterval(() => {
+            // Vous pourriez ajouter un appel AJAX pour rafraîchir les données
+            // sans recharger la page entière
+        }, 300000); // 5 minutes
     </script>
 </body>
 </html>
