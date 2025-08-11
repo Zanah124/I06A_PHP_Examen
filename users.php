@@ -100,5 +100,13 @@ class Users {
         $stmt = $this->conn->prepare($sql);
         return $stmt->execute($params);
     }
+
+    public function getUserCount() {
+    $query = "SELECT COUNT(*) as count FROM users";
+    $stmt = $this->conn->prepare($query);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $result['count'];
+}
 }
 ?>

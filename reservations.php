@@ -23,6 +23,20 @@ class Reservations {
         return $stmt->fetch(PDO::FETCH_ASSOC);
     }
 
+    // Récupérer les détails d'une réservation avec email utilisateur et titre du livre
+    public function getReservationDetails($id) {
+        $stmt = $this->conn->prepare("
+            SELECT r.*, u.email, u.nom, l.titre
+            FROM reservations r
+            JOIN users u ON r.user_id = u.id
+            JOIN livres l ON r.livre_id = l.id
+            WHERE r.id = :id
+        ");
+        $stmt->bindParam(':id', $id);
+        $stmt->execute();
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+
     // Créer une nouvelle réservation
     public function createReservation($data) {
         $stmt = $this->conn->prepare("INSERT INTO reservations (user_id, livre_id, date_reservation, statut) VALUES (:user_id, :livre_id, :date_reservation, :statut)");
@@ -66,5 +80,46 @@ class Reservations {
         $stmt->execute();
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
+
+    public function getReservationCount() {
+    $query = "SELECT COUNT(*) as count FROM reservations";
+    $stmt = $this->conn->prepare($query);
+    $stmt->execute();
+    $result = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $result['count'];
+}
+
+public function countNewNotifications($userId) {
+        try {
+            $query = "SELECT COUNT(*) as count 
+                     FROM reservations 
+                     WHERE user_id = :user_id 
+                     AND statut = 'validee' 
+                     AND is_viewed = 0";
+            $stmt = $this->conn->prepare($query);
+            $stmt->execute(['user_id' => $userId]);
+            return $stmt->fetchColumn();
+        } catch (PDOException $e) {
+            error_log("Erreur lors du comptage des notifications : " . $e->getMessage());
+            return 0;
+        }
+    }
+
+    // Marquer les notifications comme vues
+    public function markNotificationsAsViewed($userId) {
+        try {
+            $query = "UPDATE reservations 
+                     SET is_viewed = 1 
+                     WHERE user_id = :user_id 
+                     AND statut = 'validee' 
+                     AND is_viewed = 0";
+            $stmt = $this->conn->prepare($query);
+            return $stmt->execute(['user_id' => $userId]);
+        } catch (PDOException $e) {
+            error_log("Erreur lors de la mise à jour des notifications : " . $e->getMessage());
+            return false;
+        }
+    }
+
 }
 ?>
